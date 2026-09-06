@@ -8,6 +8,15 @@
 import SwiftUI
 import FoundationModels
 
+@Generable
+struct Explanation {
+    @Guide(description: "A concise explanation of the main concept in the selected passage")
+    var explanation: String
+    
+    @Guide(description: "The single most important point to remember from the selected passage")
+    var keyTakeaway: String
+}
+
 struct ContentView: View {
     @State private var inputText: String = ""
     @State private var responseText: String = ""
@@ -21,59 +30,83 @@ struct ContentView: View {
     var body: some View {
         
         VStack(spacing: 16) {
-            Text("Input")
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .font(.headline)
+            // Input Section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Input")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
 
-            TextEditor(text: $inputText)
-                .frame(height: 220)
-                .padding(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(.gray.opacity(0.4))
-                )
+                TextEditor(text: $inputText)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(height: 160)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color(.black))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(.gray.opacity(0.3), lineWidth: 1)
+                    )
+            }
 
-            HStack {
-                Button("Explain") {
-                    Task {
-                        await generateResponse(action: .explain)
-                    }
+            // Action Buttons
+            HStack(spacing: 12) {
+                Button {
+                    Task { await generateResponse(action: .explain) }
+                } label: {
+                    Label("Explain", systemImage: "text.magnifyingglass")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.bordered)
 
-                Button("Simplify") {
-                    Task {
-                        await generateResponse(action: .simplify)
-                    }
+                Button {
+                    Task { await generateResponse(action: .simplify) }
+                } label: {
+                    Label("Simplify", systemImage: "wand.and.stars")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.bordered)
             }
             .disabled(inputText.isEmpty || isLoading)
 
             Divider()
 
-            Text("Response")
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .font(.headline)
-
-            if isLoading {
-                Spacer()
-
-                ProgressView()
-
-                Spacer()
-            } else {
-                ScrollView {
-                    Text(responseText.isEmpty ? "Response will appear here." : responseText)
-                        .frame(
-                            maxWidth: .infinity,
-                            alignment: .topLeading
-                        )
-                        .textSelection(.enabled)
-                        .padding()
+            // Response Section
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Response")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
                 }
-                .frame(maxHeight: .infinity)
-                .background(.gray.opacity(0.08))
-                .clipShape(
-                    RoundedRectangle(cornerRadius: 8)
+
+                Group {
+                    if isLoading {
+                        VStack {
+                            Spacer(minLength: 40)
+                            ProgressView("Generating...")
+                            Spacer(minLength: 40)
+                        }
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        ScrollView {
+                            Text(responseText.isEmpty ? "Response will appear here." : responseText)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true) // <- prevents cropping
+                                .padding(12)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.gray.opacity(0.08))
                 )
             }
         }
@@ -91,13 +124,6 @@ struct ContentView: View {
         
         let prompt: String
         
-        switch action {
-            case .explain: 
-                prompt = "Explain the following academic passage clearly: \(inputText)"
-            case .simplify:
-                prompt = "Rewrite the following academic passage in simpler language while preserving its meaning: \(inputText)"
-        }
-        
         isLoading = true
         defer { isLoading = false }
         
@@ -108,17 +134,31 @@ struct ContentView: View {
                 instructions: """
                     You are an academic professor that help students understand academic paper concepts easier
                     """)
-            // 3. create response
-            
-            let response = try await session.respond(to: prompt)
-            // 3.1 resumes here after response is ready
-            responseText = response.content
-            // 4. catch error
+            switch action {
+                case .explain:
+                
+                    prompt = "Explain the following academic passage in 2–4 concise sentences. Focus only on the main concept and why it matters in this context. Do not explain basic concepts unless they are necessary to understand the passage. \(inputText)"
+                
+                    // 3. create response
+                    let response = try await session.respond(to: prompt, generating: Explanation.self)
+                    // 3.1 resumes here after response is ready
+                    responseText = """
+                    \(response.content.explanation)
+                    
+                    Key Takeaway: \(response.content.keyTakeaway)
+                    """
+                case .simplify:
+                
+                    prompt = "Rewrite the following academic passage in simpler language while preserving its original meaning. Do not add new information. \(inputText)"
+                
+                    // 3. create response
+                    let response = try await session.respond(to: prompt)
+                    responseText = response.content
+            }
+        // 4. Catch error
         } catch {
             responseText = "Failed to generate response: \(error.localizedDescription)"
         }
-        
-        
     }
 }
 
