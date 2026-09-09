@@ -6,12 +6,16 @@
 //
 
 import SwiftUI
+import SwiftData
 
 @main
 struct PaperCaveApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MyPDFView()
         }
+        .modelContainer(
+            for: [Paper.self, Interaction.self]
+        )
     }
 }
