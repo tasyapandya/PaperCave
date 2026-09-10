@@ -10,6 +10,10 @@ import SwiftUI
 import SwiftData
 
 struct HistoryView: View {
+
+    @Environment(\.modelContext)
+    private var modelContext
+
     @Query(
         sort: \Interaction.createdAt,
         order: .reverse
@@ -19,23 +23,62 @@ struct HistoryView: View {
     var body: some View {
 
         NavigationStack {
-            List(interactions) { interaction in
-                NavigationLink {
-                    InteractionDetailView(
-                        interaction: interaction
+
+            Group {
+
+                if interactions.isEmpty {
+
+                    ContentUnavailableView(
+                        "No History Yet",
+                        systemImage: "clock",
+                        description: Text(
+                            "Your explanations and simplifications will appear here."
+                        )
                     )
-                } label: {
-                    VStack(alignment: .leading) {
-                        Text(interaction.selectedText)
-                        Text(interaction.action)
-                        Text(
-                            interaction.createdAt,
-                            style: .date
+
+                } else {
+
+                    List {
+
+                        ForEach(
+                            interactions
+                        ) { interaction in
+
+                            NavigationLink {
+
+                                InteractionDetailView(
+                                    interaction: interaction
+                                )
+
+                            } label: {
+
+                                InteractionRowView(
+                                    interaction: interaction
+                                )
+                            }
+                        }
+                        .onDelete(
+                            perform: deleteInteractions
                         )
                     }
                 }
             }
             .navigationTitle("History")
+        }
+    }
+
+    private func deleteInteractions(
+        at offsets: IndexSet
+    ) {
+
+        for index in offsets {
+
+            let interaction =
+                interactions[index]
+
+            modelContext.delete(
+                interaction
+            )
         }
     }
 }

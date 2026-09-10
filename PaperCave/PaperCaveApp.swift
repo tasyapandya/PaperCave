@@ -10,12 +10,17 @@ import SwiftData
 
 @main
 struct PaperCaveApp: App {
+
     var body: some Scene {
+
         WindowGroup {
-            MyPDFView()
+            RootView()
         }
         .modelContainer(
-            for: [Paper.self, Interaction.self]
+            for: [
+                Paper.self,
+                Interaction.self
+            ]
         )
     }
 }

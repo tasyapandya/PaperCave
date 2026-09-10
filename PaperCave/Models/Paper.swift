@@ -11,14 +11,21 @@ import SwiftData
 
 @Model
 final class Paper {
+
     var title: String
-    
-    // TODO:
-    // Simpan identifier/path PDF kalau memang nanti dibutuhkan.
-    @Relationship(deleteRule: .cascade)
+    var createdAt: Date
+
+    @Relationship(
+        deleteRule: .cascade,
+        inverse: \Interaction.paper
+    )
     var interactions: [Interaction] = []
 
-    init(title: String) {
+    init(
+        title: String,
+        createdAt: Date = .now
+    ) {
         self.title = title
+        self.createdAt = createdAt
     }
 }
