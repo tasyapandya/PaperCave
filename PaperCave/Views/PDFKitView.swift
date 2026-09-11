@@ -23,6 +23,7 @@ enum PDFCommand: Equatable {
     case zoomOut
     case fit
     case zoomIn
+    case goTo(pageIndex: Int, bounds: CGRect)
 }
 
 struct PDFKitView: NSViewRepresentable {
@@ -177,6 +178,18 @@ struct PDFKitView: NSViewRepresentable {
 
             case .zoomIn:
                 pdfView.zoomIn(nil)
+
+            case let .goTo(pageIndex, bounds):
+                guard let page = pdfView.document?.page(at: pageIndex) else {
+                    return
+                }
+
+                let destination = PDFDestination(
+                    page: page,
+                    at: CGPoint(x: bounds.midX, y: bounds.midY)
+                )
+
+                pdfView.go(to: destination)
             }
         }
 

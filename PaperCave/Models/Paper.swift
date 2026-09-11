@@ -21,6 +21,12 @@ final class Paper {
     )
     var interactions: [Interaction] = []
 
+    @Relationship(
+        deleteRule: .cascade,
+        inverse: \Message.paper
+    )
+    var messages: [Message] = []
+
     init(
         title: String,
         createdAt: Date = .now

@@ -19,7 +19,8 @@ struct PaperCaveApp: App {
         .modelContainer(
             for: [
                 Paper.self,
-                Interaction.self
+                Interaction.self,
+                Message.self
             ]
         )
     }

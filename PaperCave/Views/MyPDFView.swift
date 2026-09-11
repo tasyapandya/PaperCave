@@ -18,6 +18,9 @@ struct MyPDFView: View {
 
     @State private var pdfUrl: URL?
     @State private var selectionInfo: PDFSelectionInfo?
+    @State private var activeSelection: PDFSelectionInfo?
+    @State private var activeSelectionID = UUID()
+    @State private var lastHandledSelectionKey: String?
     @State private var currentAction: AIAction?
     @State private var currentInteraction: Interaction?
     @State private var isLoading = false
@@ -25,8 +28,12 @@ struct MyPDFView: View {
     @State private var currentPaper: Paper?
     @State private var showHighlights = true
     @State private var pdfCommand: PDFCommand?
+    @State private var followUpText = ""
+    @State private var focusedInteractionID: UUID?
+    @State private var focusedScrollRequestID = UUID()
 
     private let aiService = AIServices()
+    private let conversationBottomID = "conversationBottom"
 
     var body: some View {
         HStack(spacing: 0) {
@@ -43,6 +50,9 @@ struct MyPDFView: View {
         .background(PaperCaveStyle.background)
         .onAppear {
             setupPaper()
+        }
+        .onChange(of: selectionInfo?.selectionKey) { _, newKey in
+            updateActiveSelection(for: newKey)
         }
     }
 }
@@ -140,50 +150,108 @@ extension MyPDFView {
     }
 }
 
+private extension PDFSelectionInfo {
+
+    var selectionKey: String {
+        [
+            text,
+            String(pageIndex),
+            String(format: "%.3f", bounds.origin.x),
+            String(format: "%.3f", bounds.origin.y),
+            String(format: "%.3f", bounds.width),
+            String(format: "%.3f", bounds.height)
+        ]
+        .joined(separator: "|")
+    }
+}
+
 extension MyPDFView {
 
     private var resultPanel: some View {
         VStack(alignment: .leading, spacing: 28) {
-            if let currentInteraction {
-                responsePanel(interaction: currentInteraction)
-            } else {
+            if conversationMessages.isEmpty {
                 emptyResultPanel
+            } else {
+                conversationPanel
             }
 
             Spacer(minLength: 18)
 
-            if selectionInfo != nil || isLoading || errorMessage != nil {
+            if activeSelection != nil {
                 actionPanel
             }
 
-            followUpPlaceholder
+            followUpInput
         }
         .padding(.horizontal, 34)
         .padding(.vertical, 74)
         .foregroundStyle(PaperCaveStyle.text)
     }
 
-    private func responsePanel(interaction: Interaction) -> some View {
-        VStack(alignment: .leading, spacing: 28) {
-            section(
-                title: interaction.action.capitalized,
-                text: interaction.explanation
-            )
+    private var conversationPanel: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    ForEach(conversationMessages) { message in
+                        messageView(message)
+                    }
 
-            section(
-                title: "Key Takeaway",
-                text: interaction.keyTakeaway
-            )
+                    if let currentInteraction {
+                        Button {
+                            toggleSaved(currentInteraction)
+                        } label: {
+                            Label(
+                                currentInteraction.isSaved ? "Saved" : "Bookmark",
+                                systemImage: currentInteraction.isSaved ? "bookmark.fill" : "bookmark"
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                    }
 
-            Button {
-                toggleSaved(interaction)
-            } label: {
-                Label(
-                    interaction.isSaved ? "Saved" : "Bookmark",
-                    systemImage: interaction.isSaved ? "bookmark.fill" : "bookmark"
-                )
+                    Color.clear
+                        .frame(height: 1)
+                        .id(conversationBottomID)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.bordered)
+            .onChange(of: activeSelectionID) { _, _ in
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(conversationBottomID, anchor: .bottom)
+                }
+            }
+            .onChange(of: focusedScrollRequestID) { _, _ in
+                guard let focusedInteractionID else {
+                    return
+                }
+
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(focusedInteractionID, anchor: .top)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func messageView(_ message: Message) -> some View {
+        if let selectedText = message.selectedText {
+            if let interactionID = interactionID(for: message) {
+                SelectedTextMessageView(text: selectedText) {
+                    openInteraction(id: interactionID)
+                }
+                .id(interactionID)
+            } else {
+                SelectedTextMessageView(text: selectedText)
+            }
+        } else if message.role == MessageRole.user.rawValue {
+            UserFollowUpBubble(text: message.content)
+        } else {
+            AssistantResponseView(
+                title: responseTitle(for: message),
+                explanation: message.explanation ?? message.content,
+                keyTakeaway: message.keyTakeaway
+            )
         }
     }
 
@@ -202,8 +270,8 @@ extension MyPDFView {
 
     private var actionPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let selectionInfo {
-                selectedTextCard(selectionInfo.text)
+            if let activeSelection {
+                selectedTextCard(activeSelection.text)
             }
 
             actionButtons
@@ -222,39 +290,24 @@ extension MyPDFView {
     }
 
     private func selectedTextCard(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Selected Text")
-                .font(.system(size: 16, weight: .bold))
-
-            ScrollView {
-                Text(text)
-                    .font(.system(size: 16))
-                    .lineSpacing(3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 116)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            PaperCaveStyle.selected,
-            in: RoundedRectangle(cornerRadius: 15)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 15)
-                .stroke(Color(red: 0.933, green: 0.796, blue: 0.682))
-        }
+        SelectedTextMessageView(text: text)
     }
 
-    private var followUpPlaceholder: some View {
+    private var followUpInput: some View {
         HStack {
-            Text("Enter your message here")
-                .foregroundStyle(Color(red: 0.63, green: 0.59, blue: 0.56))
+            TextField("Enter your message here", text: $followUpText)
+                .textFieldStyle(.plain)
+                .onSubmit {
+                    sendFollowUp()
+                }
 
-            Spacer()
-
-            Image(systemName: "paperplane")
+            Button {
+                sendFollowUp()
+            } label: {
+                Image(systemName: "paperplane")
+            }
+            .buttonStyle(.plain)
+            .disabled(trimmedFollowUp.isEmpty || isLoading)
         }
         .font(.system(size: 16))
         .padding(.horizontal, 14)
@@ -280,6 +333,112 @@ extension MyPDFView {
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
+
+    private func responseTitle(for message: Message) -> String {
+        if let title = message.title, !title.isEmpty {
+            return title
+        }
+
+        switch message.action {
+        case AIAction.simplify.rawValue:
+            return "Simplified Explanation"
+
+        default:
+            return "Explanation"
+        }
+    }
+}
+
+private struct SelectedTextMessageView: View {
+
+    let text: String
+    var onTap: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Selected Text")
+                .font(.system(size: 16, weight: .bold))
+
+            Text(text)
+                .font(.system(size: 16))
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            PaperCaveStyle.selected,
+            in: RoundedRectangle(cornerRadius: 15)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 15)
+                .stroke(Color(red: 0.933, green: 0.796, blue: 0.682))
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 15))
+        .onTapGesture {
+            onTap?()
+        }
+    }
+}
+
+private struct UserFollowUpBubble: View {
+
+    let text: String
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 76)
+
+            Text(text)
+                .font(.system(size: 16))
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .frame(maxWidth: 615, alignment: .leading)
+                .background(
+                    PaperCaveStyle.selected,
+                    in: RoundedRectangle(cornerRadius: 15)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 15)
+                        .stroke(Color(red: 0.933, green: 0.796, blue: 0.682))
+                }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+private struct AssistantResponseView: View {
+
+    let title: String
+    let explanation: String
+    let keyTakeaway: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            responseSection(title: title, text: explanation)
+
+            if let keyTakeaway {
+                responseSection(title: "Key Takeaway", text: keyTakeaway)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func responseSection(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 24, weight: .bold))
+
+            Text(text)
+                .font(.system(size: 16))
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 }
 
 extension MyPDFView {
@@ -290,20 +449,20 @@ extension MyPDFView {
                 runAI(action: .explain)
             } label: {
                 Text("Explain")
-                    .frame(width: 100)
+                    .frame(width: 102)
             }
 
             Button {
                 runAI(action: .simplify)
             } label: {
                 Text("Simplify")
-                    .frame(width: 100)
+                    .frame(width: 102)
             }
         }
         .font(.system(size: 16, weight: .bold))
         .buttonStyle(PaperCaveActionButtonStyle())
         .frame(maxWidth: .infinity, alignment: .center)
-        .disabled(selectionInfo == nil || isLoading)
+        .disabled(activeSelection == nil || isLoading)
     }
 }
 
@@ -327,7 +486,7 @@ private struct PaperCaveActionButtonStyle: ButtonStyle {
 extension MyPDFView {
 
     private func runAI(action: AIAction) {
-        guard let selectionInfo else {
+        guard let selectionInfo = activeSelection else {
             return
         }
 
@@ -351,7 +510,8 @@ extension MyPDFView {
                 let generated =
                     try await aiService.generate(
                         text: cleanText,
-                        action: action
+                        action: action,
+                        history: conversationMessages
                     )
 
                 currentAction = action
@@ -364,9 +524,44 @@ extension MyPDFView {
                     )
 
                 currentInteraction = interaction
+                lastHandledSelectionKey = selectionInfo.selectionKey
+                activeSelection = nil
             } catch {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func sendFollowUp() {
+        let question = trimmedFollowUp
+
+        guard !question.isEmpty, !isLoading else {
+            return
+        }
+
+        Task {
+            let userMessage = saveMessage(
+                role: .user,
+                content: question
+            )
+
+            followUpText = ""
+            isLoading = true
+            errorMessage = nil
+
+            do {
+                let generated = try await aiService.followUp(
+                    question: question,
+                    history: conversationMessages
+                )
+
+                saveAssistantMessage(generated)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+
+            isLoading = false
+            _ = userMessage
         }
     }
 }
@@ -395,7 +590,60 @@ extension MyPDFView {
         modelContext.insert(interaction)
         currentPaper?.interactions.append(interaction)
 
+        saveMessage(
+            role: .user,
+            content: action.rawValue.capitalized,
+            selectedText: selection.text,
+            action: action,
+            interactionID: interaction.id
+        )
+
+        saveAssistantMessage(generated, action: action)
+
         return interaction
+    }
+
+    @discardableResult
+    private func saveMessage(
+        role: MessageRole,
+        content: String,
+        selectedText: String? = nil,
+        action: AIAction? = nil,
+        interactionID: UUID? = nil,
+        title: String? = nil,
+        explanation: String? = nil,
+        keyTakeaway: String? = nil
+    ) -> Message {
+        let message = Message(
+            role: role,
+            content: content,
+            selectedText: selectedText,
+            action: action?.rawValue,
+            interactionID: interactionID,
+            title: title,
+            explanation: explanation,
+            keyTakeaway: keyTakeaway,
+            paper: currentPaper
+        )
+
+        modelContext.insert(message)
+        currentPaper?.messages.append(message)
+
+        return message
+    }
+
+    private func saveAssistantMessage(
+        _ generated: Explanation,
+        action: AIAction? = nil
+    ) {
+        saveMessage(
+            role: .assistant,
+            content: generated.explanation,
+            action: action,
+            title: generated.title,
+            explanation: generated.explanation,
+            keyTakeaway: generated.keyTakeaway
+        )
     }
 }
 
@@ -423,6 +671,53 @@ extension MyPDFView {
                 )
             }
     }
+
+    private var conversationMessages: [Message] {
+        currentPaper?.messages.sorted { $0.createdAt < $1.createdAt } ?? []
+    }
+
+    private var trimmedFollowUp: String {
+        followUpText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func interactionID(for message: Message) -> UUID? {
+        if let interactionID = message.interactionID {
+            return interactionID
+        }
+
+        guard let selectedText = message.selectedText else {
+            return nil
+        }
+
+        return currentPaper?
+            .interactions
+            .first(where: {
+                $0.selectedText == selectedText
+                && $0.action == message.action
+            })?
+            .id
+    }
+
+    private func updateActiveSelection(for newKey: String?) {
+        guard let selectionInfo, let newKey else {
+            return
+        }
+
+        guard activeSelection == nil else {
+            if !isLoading {
+                activeSelection = selectionInfo
+            }
+
+            return
+        }
+
+        guard newKey != lastHandledSelectionKey else {
+            return
+        }
+
+        activeSelection = selectionInfo
+        activeSelectionID = UUID()
+    }
 }
 
 extension MyPDFView {
@@ -443,6 +738,35 @@ extension MyPDFView {
 
         currentInteraction = interaction
         currentAction = AIAction(rawValue: interaction.action)
+        focusedInteractionID = interaction.id
+        focusedScrollRequestID = UUID()
+
+        if let pageIndex = interaction.pageIndex,
+           let bounds = interaction.highlightBounds {
+            pdfCommand = .goTo(pageIndex: pageIndex, bounds: bounds)
+        }
+    }
+
+    private func openInteraction(from message: Message) {
+        if let interactionID = message.interactionID {
+            openInteraction(id: interactionID)
+            return
+        }
+
+        guard let currentPaper,
+              let selectedText = message.selectedText,
+              let interaction =
+                currentPaper
+                    .interactions
+                    .first(where: {
+                        $0.selectedText == selectedText
+                        && $0.action == message.action
+                    })
+        else {
+            return
+        }
+
+        openInteraction(id: interaction.id)
     }
 }
 

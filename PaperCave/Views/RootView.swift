@@ -49,9 +49,9 @@ private struct AppSidebar: View {
     var body: some View {
         VStack(spacing: 28) {
 
-            Image(systemName: "doc.richtext")
-                .font(.system(size: 28))
-                .foregroundStyle(PaperCaveStyle.text)
+            Image("IconPNG")
+                .resizable()
+                .scaledToFit()
                 .frame(width: 34, height: 34)
                 .padding(.top, 28)
 
